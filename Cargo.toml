@@ -1,0 +1,13 @@
+[package]
+name = "zellij_salto"
+version = "0.1.0"
+edition = "2021"
+description = "Salta entre paneles de la pestaña actual con letras (al estilo nvim-window)"
+
+[dependencies]
+zellij-tile = "=0.45.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
