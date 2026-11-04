@@ -11,8 +11,9 @@ nada cancelan y restauran los títulos.
 ## Compilar
 
 ```bash
+cd ~/proyectos/zellij-arbol
 rustup target add wasm32-wasip1
-cargo build --release
+cargo build --release --target wasm32-wasip1
 mkdir -p ~/.config/zellij/plugins
 cp target/wasm32-wasip1/release/zellij_salto.wasm ~/.config/zellij/plugins/
 ```
