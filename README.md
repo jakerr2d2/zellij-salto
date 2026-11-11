@@ -8,22 +8,22 @@ Cuando una pestaña acumula muchos paneles, moverse con las flechas o con `Ctrl+
 
 - Salto directo a cualquier panel de la pestaña actual con una o dos teclas.
 - Dos modos de selección en un solo archivo `.wasm`: **letras** sobre los bordes de los paneles o **mapa** a pantalla completa.
-- El modo mapa funciona con `pane_frames false`.
+- El modo mapa funciona con `pane_frames false`, con esquinas redondeadas, colores de 24 bits configurables y el panel actual resaltado.
 - Etiquetas de una letra (hasta 26 paneles) y de dos letras (hasta 676) cuando hay más paneles.
 - Orden de lectura estable: de arriba abajo y de izquierda a derecha.
 - Cancelación segura con `Esc` o con cualquier tecla no válida.
 
 ## Modos
 
-|                                 | Letras                                                             | Mapa                                                                     |
-| ------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Qué muestra                     | Una etiqueta `[a]` en el título de cada panel                      | Un plano de la pestaña con un rectángulo por panel, su letra y su título |
-| Requiere `pane_frames true`     | Sí                                                                 | No                                                                       |
-| Ejecución                       | En segundo plano, activado por mensaje                             | Panel flotante a pantalla completa                                       |
-| Permisos                        | `ReadApplicationState`, `ChangeApplicationState`, `InterceptInput` | `ReadApplicationState`, `ChangeApplicationState`                         |
-| Toca los títulos de los paneles | Sí, de forma temporal                                              | No                                                                       |
-| Intercepta el teclado           | Sí, mientras eliges                                                | No                                                                       |
-| Paneles flotantes               | Se incluyen                                                        | Se ignoran                                                               |
+| | Letras | Mapa |
+|---|---|---|
+| Qué muestra | Una etiqueta `[a]` en el título de cada panel | Un plano de la pestaña con un rectángulo por panel, su letra y su título |
+| Requiere `pane_frames true` | Sí | No |
+| Ejecución | En segundo plano, activado por mensaje | Panel flotante a pantalla completa |
+| Permisos | `ReadApplicationState`, `ChangeApplicationState`, `InterceptInput` | `ReadApplicationState`, `ChangeApplicationState` |
+| Toca los títulos de los paneles | Sí, de forma temporal | No |
+| Intercepta el teclado | Sí, mientras eliges | No |
+| Paneles flotantes | Se incluyen | Se ignoran |
 
 En el modo mapa, el panel que tenía el foco aparece con su letra en verde.
 
@@ -35,9 +35,8 @@ En el modo mapa, el panel que tenía el foco aparece con su letra en verde.
 ## Instalación
 
 ```bash
-cd ~/proyectos/zellij-arbol
 rustup target add wasm32-wasip1
-cargo build --release --target wasm32-wasip1
+cargo build --release
 mkdir -p ~/.config/zellij/plugins
 cp target/wasm32-wasip1/release/zellij_salto.wasm ~/.config/zellij/plugins/
 ```
@@ -118,11 +117,30 @@ Zellij guarda los permisos por URL del plugin.
 
 Constantes al principio de `src/main.rs`:
 
-| Constante                 | Descripción                                                                                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CHARS`                   | Letras usadas para las etiquetas, por orden. Por defecto, fila central primero.                                                                                                |
-| `TIMEOUT_SECS`            | Segundos antes de cancelar solo (modo letras).                                                                                                                                 |
+| Constante | Descripción |
+|---|---|
+| `CHARS` | Letras usadas para las etiquetas, por orden. Por defecto, fila central primero. |
+| `TIMEOUT_SECS` | Segundos antes de cancelar solo (modo letras). |
 | `RESTORE_WITH_EMPTY_NAME` | Cómo se restauran los títulos al terminar (modo letras). Con `false` cada panel conserva su título anterior como nombre fijo; con `true` se intenta volver al título dinámico. |
+
+## Apariencia (modo mapa)
+
+El mapa se dibuja con esquinas redondeadas, una insignia de color para cada letra, el panel actual resaltado en otro color y una barra inferior con el número de paneles y lo que llevas tecleado. Requiere una terminal con colores de 24 bits (truecolor).
+
+Los colores se pueden cambiar con opciones del alias `salto-mapa`, todas opcionales y en formato `#rrggbb`:
+
+```kdl
+salto-mapa location="file:/home/<usuario>/.config/zellij/plugins/zellij_salto.wasm" {
+    modo "mapa"
+    color_borde "#8b7bd8"          // líneas de los paneles
+    color_titulo "#c9c9e3"         // título de cada panel
+    color_letra "#ff2a6d"          // insignia con la letra
+    color_actual "#05d9e8"         // panel que tenía el foco
+    color_fondo_actual "#102a3a"   // fondo del panel que tenía el foco
+}
+```
+
+Si un valor no es un color válido, se usa el predeterminado. El modo letras no se ve afectado: solo cambia los títulos de los paneles.
 
 ## Cómo funciona
 
@@ -139,13 +157,14 @@ Constantes al principio de `src/main.rs`:
 
 ## Solución de problemas
 
-| Síntoma                                | Causa probable                                                                                             |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| El atajo no hace nada                  | Faltan permisos, el atajo está ocupado por otro `bind`, o tu terminal no envía bien las teclas con Alt.    |
-| En modo letras no se ven las etiquetas | `pane_frames false` oculta los títulos. Activa `pane_frames true` o usa el modo mapa.                      |
-| Los cambios del `.wasm` no se aplican  | Zellij cachea los plugins: reinicia la sesión.                                                             |
-| El mapa sale pequeño o centrado        | No se aplicó la petición de pantalla completa del panel flotante.                                          |
-| Error al arrancar Zellij               | Revisa `config.kdl` con `zellij setup --check`; vigila que las llaves del bloque `plugins` estén cerradas. |
+| Síntoma | Causa probable |
+|---|---|
+| El atajo no hace nada | Faltan permisos, el atajo está ocupado por otro `bind`, o tu terminal no envía bien las teclas con Alt. |
+| En modo letras no se ven las etiquetas | `pane_frames false` oculta los títulos. Activa `pane_frames true` o usa el modo mapa. |
+| Los cambios del `.wasm` no se aplican | Zellij cachea los plugins: reinicia la sesión. |
+| Los colores del mapa se ven mal o sin color | La terminal no soporta colores de 24 bits. |
+| El mapa sale pequeño o centrado | No se aplicó la petición de pantalla completa del panel flotante. |
+| Error al arrancar Zellij | Revisa `config.kdl` con `zellij setup --check`; vigila que las llaves del bloque `plugins` estén cerradas. |
 
 Para ver los mensajes del plugin, sigue el log mientras pulsas el atajo:
 

@@ -32,7 +32,7 @@ const D: u8 = 2;
 const L: u8 = 4;
 const R: u8 = 8;
 const BOX: [char; 16] = [
-    ' ', '│', '│', '│', '─', '┘', '┐', '┤', '─', '└', '┌', '├', '─', '┴', '┬', '┼',
+    ' ', '│', '│', '│', '─', '╯', '╮', '┤', '─', '╰', '╭', '├', '─', '┴', '┬', '┼',
 ];
 
 #[derive(Default, PartialEq)]
@@ -69,12 +69,14 @@ struct State {
     picking: Option<Picking>,
     // Modo mapa
     map_typed: String,
+    theme: Theme,
 }
 
 register_plugin!(State);
 
 impl ZellijPlugin for State {
     fn load(&mut self, configuration: BTreeMap<String, String>) {
+        self.theme = Theme::from_config(&configuration);
         self.mode = match configuration.get("modo").map(|s| s.as_str()) {
             Some("mapa") => Mode::Map,
             _ => Mode::Hints,
@@ -319,6 +321,7 @@ impl State {
             std::io::stdout().flush().ok();
             return;
         }
+        let t = &self.theme;
         let chars: Vec<char> = CHARS.chars().collect();
         let labels = make_labels(panes.len(), &chars);
 
@@ -338,7 +341,7 @@ impl State {
         let span_x = (max_x - min_x).max(1) as f64;
         let span_y = (max_y - min_y).max(1) as f64;
 
-        // La última fila se reserva para la ayuda.
+        // La última fila se reserva para la barra inferior.
         let grid_rows = rows - 1;
         let grid_cols = cols;
         let sx = (grid_cols - 1) as f64 / span_x;
@@ -346,9 +349,10 @@ impl State {
         let ex = |x: usize| (((x - min_x) as f64) * sx).round() as usize;
         let ey = |y: usize| (((y - min_y) as f64) * sy).round() as usize;
 
+        // Pasada 1: rectángulos y máscara de líneas. Los bordes compartidos
+        // entre paneles vecinos coinciden y las uniones salen de la máscara.
         let mut mask = vec![vec![0u8; grid_cols]; grid_rows];
-        let mut text: Vec<Vec<Option<(char, u8)>>> = vec![vec![None; grid_cols]; grid_rows];
-
+        let mut rects = Vec::new();
         for (pane, label) in panes.iter().zip(labels.iter()) {
             let x0 = ex(pane.pane_x).min(grid_cols - 1);
             let x1 = ex(pane.pane_x + pane.pane_columns).min(grid_cols - 1);
@@ -357,9 +361,6 @@ impl State {
             if x1 <= x0 || y1 <= y0 {
                 continue;
             }
-
-            // Marco: los bordes compartidos entre paneles vecinos coinciden y
-            // las uniones se resuelven con la máscara de direcciones.
             for x in x0..=x1 {
                 if x > x0 {
                     mask[y0][x] |= L;
@@ -380,22 +381,58 @@ impl State {
                     mask[y][x1] |= D;
                 }
             }
+            rects.push((x0, y0, x1, y1, *pane, label));
+        }
+
+        let mut cells = vec![vec![Cell::BLANK; grid_cols]; grid_rows];
+        for r in 0..grid_rows {
+            for c in 0..grid_cols {
+                if mask[r][c] != 0 {
+                    cells[r][c] = Cell {
+                        ch: BOX[mask[r][c] as usize],
+                        fg: Some(t.border),
+                        ..Cell::BLANK
+                    };
+                }
+            }
+        }
+
+        // Pasada 2: panel actual resaltado, etiquetas y títulos.
+        for (x0, y0, x1, y1, pane, label) in &rects {
+            let (x0, y0, x1, y1) = (*x0, *y0, *x1, *y1);
+            let focused = pane.is_focused;
+
+            if focused {
+                for y in (y0 + 1)..y1 {
+                    for x in (x0 + 1)..x1 {
+                        cells[y][x].bg = Some(t.focus_bg);
+                    }
+                }
+                for x in x0..=x1 {
+                    cells[y0][x].fg = Some(t.focus);
+                    cells[y1][x].fg = Some(t.focus);
+                }
+                for y in y0..=y1 {
+                    cells[y][x0].fg = Some(t.focus);
+                    cells[y][x1].fg = Some(t.focus);
+                }
+            }
 
             let iw = x1 - x0 - 1;
             let ih = y1 - y0 - 1;
             let cy = (y0 + y1) / 2;
 
-            // Etiqueta (solo los paneles que siguen coincidiendo con lo tecleado).
+            // Etiqueta como "insignia" (solo si sigue coincidiendo con lo tecleado).
             if label.starts_with(&self.map_typed) {
-                let tag = format!(" {} ", label);
+                let tag = format!(" {} ", label.to_uppercase());
                 let tag_len = tag.chars().count();
                 let start = if iw >= tag_len {
                     x0 + 1 + (iw - tag_len) / 2
                 } else {
                     (x0 + x1) / 2
                 };
-                let kind = if pane.is_focused { 3 } else { 2 };
-                put(&mut text, cy, start, &tag, kind);
+                let badge = if focused { t.focus } else { t.label };
+                put(&mut cells, cy, start, &tag, Some(t.ink), Some(badge), true);
             }
 
             // Título debajo de la etiqueta, si cabe.
@@ -407,50 +444,185 @@ impl State {
                 };
                 let title: String = raw.chars().take(iw).collect();
                 let title_len = title.chars().count();
-                put(&mut text, cy + 1, x0 + 1 + (iw - title_len) / 2, &title, 1);
+                let (fg, bg) = if focused {
+                    (t.focus, Some(t.focus_bg))
+                } else {
+                    (t.title, None)
+                };
+                put(
+                    &mut cells,
+                    cy + 1,
+                    x0 + 1 + (iw - title_len) / 2,
+                    &title,
+                    Some(fg),
+                    bg,
+                    false,
+                );
             }
         }
 
+        // Salida con colores de 24 bits.
         let mut out = String::new();
         for r in 0..grid_rows {
             out.push_str(&format!("\x1b[{};1H", r + 1));
-            let mut current = 255u8;
+            let mut prev: Option<Cell> = None;
             for c in 0..grid_cols {
-                let (ch, kind) = match text[r][c] {
-                    Some(v) => v,
-                    None => (BOX[mask[r][c] as usize], 0),
+                let cell = cells[r][c];
+                let changed = match prev {
+                    Some(p) => !same_style(&p, &cell),
+                    None => true,
                 };
-                if kind != current {
-                    out.push_str(match kind {
-                        1 => "\x1b[0;2m",
-                        2 => "\x1b[0;1;7m",
-                        3 => "\x1b[0;1;7;32m",
-                        _ => "\x1b[0m",
-                    });
-                    current = kind;
+                if changed {
+                    out.push_str(&sgr(&cell));
                 }
-                out.push(ch);
+                out.push(cell.ch);
+                prev = Some(cell);
             }
             out.push_str("\x1b[0m");
         }
-        let help: String = "Letra: saltar a ese panel · Esc: cancelar"
-            .chars()
-            .take(cols)
-            .collect();
-        out.push_str(&format!("\x1b[{};1H\x1b[0;2m{}\x1b[0m", rows, help));
+
+        // Barra inferior.
+        let typed = if self.map_typed.is_empty() {
+            String::new()
+        } else {
+            format!("  ›  {}", self.map_typed.to_uppercase())
+        };
+        let help: String = format!(
+            "  {} paneles · elige una letra · esc cancela{}",
+            rects.len(),
+            typed
+        )
+        .chars()
+        .take(cols.saturating_sub(7))
+        .collect();
+        let badge = Cell {
+            ch: ' ',
+            fg: Some(t.ink),
+            bg: Some(t.label),
+            bold: true,
+        };
+        let text = Cell {
+            ch: ' ',
+            fg: Some(t.title),
+            ..Cell::BLANK
+        };
+        out.push_str(&format!(
+            "\x1b[{};1H{} SALTO \x1b[0m{}{}\x1b[0m",
+            rows,
+            sgr(&badge),
+            sgr(&text),
+            help
+        ));
+
         print!("{out}");
         std::io::stdout().flush().ok();
     }
 }
 
-fn put(text: &mut [Vec<Option<(char, u8)>>], row: usize, col: usize, s: &str, kind: u8) {
-    if row >= text.len() {
+type Rgb = (u8, u8, u8);
+
+/// Colores del modo mapa. Todos son opcionales en la configuración del alias:
+/// color_borde, color_titulo, color_letra, color_actual, color_fondo_actual
+/// (en formato "#rrggbb").
+struct Theme {
+    border: Rgb,
+    title: Rgb,
+    label: Rgb,
+    focus: Rgb,
+    focus_bg: Rgb,
+    ink: Rgb,
+}
+
+impl Theme {
+    fn from_config(config: &BTreeMap<String, String>) -> Self {
+        let get = |key: &str, default: Rgb| {
+            config
+                .get(key)
+                .and_then(|v| parse_hex(v))
+                .unwrap_or(default)
+        };
+        Theme {
+            border: get("color_borde", (0x8b, 0x7b, 0xd8)),
+            title: get("color_titulo", (0xc9, 0xc9, 0xe3)),
+            label: get("color_letra", (0xff, 0x2a, 0x6d)),
+            focus: get("color_actual", (0x05, 0xd9, 0xe8)),
+            focus_bg: get("color_fondo_actual", (0x10, 0x2a, 0x3a)),
+            ink: (0x0d, 0x02, 0x21),
+        }
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme::from_config(&BTreeMap::new())
+    }
+}
+
+fn parse_hex(s: &str) -> Option<Rgb> {
+    let s = s.trim().trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let n = u32::from_str_radix(s, 16).ok()?;
+    Some((
+        ((n >> 16) & 0xff) as u8,
+        ((n >> 8) & 0xff) as u8,
+        (n & 0xff) as u8,
+    ))
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Cell {
+    ch: char,
+    fg: Option<Rgb>,
+    bg: Option<Rgb>,
+    bold: bool,
+}
+
+impl Cell {
+    const BLANK: Cell = Cell {
+        ch: ' ',
+        fg: None,
+        bg: None,
+        bold: false,
+    };
+}
+
+fn same_style(a: &Cell, b: &Cell) -> bool {
+    a.fg == b.fg && a.bg == b.bg && a.bold == b.bold
+}
+
+fn sgr(cell: &Cell) -> String {
+    let mut s = String::from("\x1b[0");
+    if cell.bold {
+        s.push_str(";1");
+    }
+    if let Some((r, g, b)) = cell.fg {
+        s.push_str(&format!(";38;2;{r};{g};{b}"));
+    }
+    if let Some((r, g, b)) = cell.bg {
+        s.push_str(&format!(";48;2;{r};{g};{b}"));
+    }
+    s.push('m');
+    s
+}
+
+fn put(
+    cells: &mut [Vec<Cell>],
+    row: usize,
+    col: usize,
+    s: &str,
+    fg: Option<Rgb>,
+    bg: Option<Rgb>,
+    bold: bool,
+) {
+    if row >= cells.len() {
         return;
     }
     for (i, ch) in s.chars().enumerate() {
         let c = col + i;
-        if c < text[row].len() {
-            text[row][c] = Some((ch, kind));
+        if c < cells[row].len() {
+            cells[row][c] = Cell { ch, fg, bg, bold };
         }
     }
 }
